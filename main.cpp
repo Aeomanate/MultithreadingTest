@@ -30,23 +30,26 @@ class TaskPool {
         Task task;
         {
             std::unique_lock lock(m);
-            if(tasks.empty()) v.wait(lock, [&] { return !tasks.empty(); });
-            task = tasks.front();
-            tasks.pop();
+            if(tasks.empty()) v.wait(lock, [&] { return !tasks.empty() || !work; });
+            if(work) {
+                task = tasks.front();
+                tasks.pop();
+            }
         }
-        if(task)
-            return task;
-        else {
-            std::cerr << "Function broken\n";
-            return { };
-        }
+        return task ? task : Task();
     }
     
-    
+    void stopWait() {
+        work = false;
+        v.notify_all();
+    }
+  
+  
   private:
     std::queue<Task> tasks;
     std::mutex m;
     std::condition_variable v;
+    bool work = true;
 };
 
 struct Thread {
@@ -72,14 +75,16 @@ class ThreadPool {
         }
     }
     ~ThreadPool() {
-        for(auto& [id, t]: threads){
+        work = false;
+        task_pool.stopWait();
+        for(auto& [id, t]: threads) {
             t->thread.join();
         }
     }
     
     void worker() {
         Thread& thread = *threads[std::this_thread::get_id()];
-        while(true) {
+        while(work) {
             thread.done = true;
             Task task = task_pool.getTask();
             if(task) {
@@ -103,16 +108,22 @@ class ThreadPool {
         }
         return true;
     }
-    
+  
   private:
     TaskPool& task_pool;
     std::map<std::thread::id, std::unique_ptr<Thread>> threads;
+    bool work = true;
 };
 
-void setCursor(int row, int col, int background = 0xF,  int foreground = 0x0) {
+void setCursor(int row, int col, int background = 0xF, int foreground = 0x0) {
     static HANDLE console = GetStdHandle(STD_OUTPUT_HANDLE);
+    static struct S {
+        S() {
+            MoveWindow(GetConsoleWindow(), 100, 100, 1256, 600, TRUE);
+        }
+    } set_size;
     SetConsoleCursorPosition(console, {short(col), short(row)});
-    SetConsoleTextAttribute(console, byte(background << 4 | foreground));
+    SetConsoleTextAttribute(console, byte(background << 4u | foreground));
 }
 
 int main() {
@@ -138,7 +149,4 @@ int main() {
             });
         }
     }
-    
-    std::cout << " Finish ";
-    return 0;
 }
